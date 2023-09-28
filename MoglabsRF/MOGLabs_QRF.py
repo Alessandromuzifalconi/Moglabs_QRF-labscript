@@ -289,8 +289,6 @@ class MOGLabs_QRF(PseudoclockDevice):
                         #print(gate.raw_output)
                         #print(gate.child_devices)
 
-
-
                         # for connection in DDSs:
                         #     if connection in range(2):
                         #         # Dynamic DDS
@@ -307,17 +305,17 @@ class MOGLabs_QRF(PseudoclockDevice):
                         # TODO: enable/disable act on the TTL. in table mode we need to know the RF level and set amp to minimum / last level.
                         #       if level is never set use manual values
 
-                        out_table = np.zeros(len(times), dtype=dtypes)
+                        out_table = np.zeros(len(times)-2, dtype=dtypes) # -2 added by Ale to remove useless points
                         out_table['freq'].fill(DEFAULT_RF_FREQ)
 
                         #print(f"Channel {connection} output: {[dds.frequency.raw_output,dds.amplitude.raw_output,dds.phase.raw_output]}")
                         # The last two instructions are left blank, for BLACS
                         # to fill in at program time.
                         # these values are the same as the one copied in the table
-                        out_table['time'][:]  = times
-                        out_table['freq'][:]  = dds.frequency.raw_output
-                        out_table['amp'][:]   = dds.amplitude.raw_output
-                        out_table['phase'][:] = dds.phase.raw_output
+                        out_table['time'][:]  = times[1:-1]
+                        out_table['freq'][:]  = dds.frequency.raw_output[1:-1]
+                        out_table['amp'][:]   = dds.amplitude.raw_output[1:-1]
+                        out_table['phase'][:] = dds.phase.raw_output[1:-1]
 
                         grp.create_dataset('TABLE_DATA%i'%channel, compression=config.compression, data=out_table)
                         flags = (FLAG_TABE_MODE if IM.table_mode else 0) | (FLAG_TRIGGER_EACH_STEP if IM.trigger_each_step else 0)
@@ -719,7 +717,7 @@ class MOGLabs_QRF_Worker(Worker):
                 # all channels go to table mode
                 self.dev.cmd(f'MODE,{ddsno+1},TSB')            
                 # Added by Ale 
-                self.dev.cmd(f'TABLE,CLEAR,{ddsno+1}')            
+                #self.dev.cmd(f'TABLE,CLEAR,{ddsno+1}')            
                 self.dev.cmd(F'TABLE,EDGE,{ddsno+1},RISING') # set trigger edge rising    
                 data = table_data
                 for i, line in enumerate(data):
@@ -730,9 +728,15 @@ class MOGLabs_QRF_Worker(Worker):
                         #ddsno + 1, i + 1, line['freq%d' % ddsno], line['amp%d' % ddsno], line['phase%d' % ddsno])
                         #command = 'TABLE,APPEND,%d,%i,%.3f,%.3f,0' % (ddsno + 1, line['freq'], line['amp'], line['phase'])
                         command = f"TABLE,APPEND,{ddsno + 1},{line['freq']} MHz,{line['amp']} dBm,{line['phase']}, 0"
-                        print(f'Command: {command}')
-                        #print(f"A line in the table of Ch {ddsno+1} has changed: sending command", command)
+                        #print(f'Command: {command}')
+                        print(f"A line in the table of Ch {ddsno+1} has changed: sending command", command)
                         self.dev.cmd(command)
+
+                #self.dev.cmd(f'TABLE,APPEND,{ddsno+1},10,0x0,0,0') # Switch off
+                #self.dev.cmd(f'TABLE,ENTRIES,{ddsno+1},{len(data)+1}')
+                #self.dev.cmd(f'TABLE,ARM,{ddsno+1}')
+                #print(f"Ch {ddsno+1}: armed with {len(data)+1} entries")
+
                 et = time.time()
                 tt = et - st
                 self.logger.debug('Time spent on line %s: %s' % (i, tt))
@@ -744,9 +748,21 @@ class MOGLabs_QRF_Worker(Worker):
                     self.logger.debug('New table is longer than old table and has replaced it.')
             
                 self.final_values[f'channel {ddsno}'] = {}
-                self.final_values[f'channel {ddsno}']['freq'] = data[-1]['freq']
-                self.final_values[f'channel {ddsno}']['amp'] = data[-1]['amp']
-                self.final_values[f'channel {ddsno}']['phase'] = data[-1]['phase']
+                #if len(data) == 0: # if no command was sent to the channel
+                 #   print(f'Ch{ddsno+1} is len == 0')
+                 #   self.final_values[f'channel {ddsno}']['freq'] = 10
+                 #   self.final_values[f'channel {ddsno}']['amp'] = 0x0
+                 #   self.final_values[f'channel {ddsno}']['phase'] = 0
+                    #self.dev.cmd(f'TABLE,APPEND,{ddsno+1},10,0x0,0,0') # Switch off
+                    #self.dev.cmd(f'TABLE,ENTRIES,{ddsno+1},{len(data)+1}')
+                    #self.dev.cmd(f'TABLE,ARM,{ddsno+1}')
+                #else:   
+                #    print(f'Ch{ddsno+1} is else')
+                if len(data) != 0:
+                    self.final_values[f'channel {ddsno}']['freq'] = data[-1]['freq']
+                    self.final_values[f'channel {ddsno}']['amp'] = data[-1]['amp']
+                    self.final_values[f'channel {ddsno}']['phase'] = data[-1]['phase']
+                
                 self.dev.cmd(f'TABLE,APPEND,{ddsno+1},10,0x0,0,0') # Switch off
                 self.dev.cmd(f'TABLE,ENTRIES,{ddsno+1},{len(data)+1}')
                 self.dev.cmd(f'TABLE,ARM,{ddsno+1}')
@@ -859,6 +875,8 @@ class MOGLabs_QRF_Worker(Worker):
             # only program the channels that we need to
             for ddsnumber in DDSs:
                 channel_values = values['channel %d' % ddsnumber]
+                if channel_values == {}:
+                    channel_values = {'freq': 10, 'amp': 0x0, 'phase': 0}
                 for subchnl in ['freq', 'amp', 'phase']:
                     self.program_static(ddsnumber, subchnl, channel_values[subchnl])
 
